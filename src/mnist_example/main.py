@@ -10,10 +10,9 @@ from torch.optim.lr_scheduler import StepLR
 class CustomOptimizer(optim.Optimizer):
     """SGD with momentum and decoupled weight decay.
 
-    If nonneg=True, weight matrices/kernels (dim > 1) get a multiplicative
-    update instead (p *= to_mult, with to_mult in (0, 2)), which preserves
-    sign, so non-negative weights stay non-negative. Biases always get the
-    additive update and are unconstrained.
+    If nonneg=True, every parameter gets a multiplicative update instead
+    (p *= to_mult, with to_mult in (0, 2)), which preserves sign, so
+    non-negative weights stay non-negative. Zero-initialized biases stay 0.
     """
     def __init__(self, params, lr=0.01, momentum=0.9, weight_decay=0.0, nonneg=False):
         defaults = dict(lr=lr, momentum=momentum, weight_decay=weight_decay, nonneg=nonneg)
@@ -40,7 +39,7 @@ class CustomOptimizer(optim.Optimizer):
                     state['momentum_buffer'].mul_(momentum).add_(p.grad)
 
                 to_add = state['momentum_buffer'] * -lr
-                if group['nonneg'] and p.dim() > 1:
+                if group['nonneg']:
                     # exp(x) in (0, 1] for x <= 0, mirrored to 2 - exp(-x) in (1, 2) for x > 0
                     e = torch.exp(-to_add.abs())
                     to_mult = torch.where(to_add <= 0, e, 2 - e)
@@ -57,7 +56,6 @@ def init_weights(model, nonneg=False):
     If nonneg=True, weights are drawn from U(0, 2/fan_in) so E[w] = 1/fan_in.
     With all-positive weights the activation mean (not the variance) is what
     compounds across layers, so this keeps it roughly constant with depth.
-    Biases keep PyTorch's default init, U(-1/sqrt(fan_in), 1/sqrt(fan_in)).
     """
     for m in model.modules():
         if isinstance(m, (nn.Conv2d, nn.Linear)):
@@ -66,7 +64,7 @@ def init_weights(model, nonneg=False):
                 nn.init.uniform_(m.weight, 0.0, 2.0 / fan_in)
             else:
                 nn.init.kaiming_uniform_(m.weight, nonlinearity='relu')
-            if m.bias is not None and not nonneg:
+            if m.bias is not None:
                 nn.init.zeros_(m.bias)
 
 
@@ -156,8 +154,6 @@ def main():
                         help='learning rate (default: 0.01 for custom, 1.0 for adadelta)')
     parser.add_argument('--optimizer', choices=['custom', 'adadelta'], default='custom',
                         help='optimizer to use (default: custom)')
-    parser.add_argument('--bias-lr', type=float, default=None, metavar='LR',
-                        help='learning rate for biases (default: 0.01 with --nonneg, else --lr)')
     parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
                         help='momentum for the custom optimizer (default: 0.9)')
     parser.add_argument('--weight-decay', type=float, default=0.0, metavar='WD',
@@ -219,12 +215,7 @@ def main():
 
     if args.optimizer == 'custom':
         lr = args.lr if args.lr is not None else 0.01
-        bias_lr = args.bias_lr if args.bias_lr is not None else (0.01 if args.nonneg else lr)
-        params = [
-            dict(params=[p for p in model.parameters() if p.dim() > 1]),
-            dict(params=[p for p in model.parameters() if p.dim() <= 1], lr=bias_lr),
-        ]
-        optimizer = CustomOptimizer(params, lr=lr, momentum=args.momentum,
+        optimizer = CustomOptimizer(model.parameters(), lr=lr, momentum=args.momentum,
                                     weight_decay=args.weight_decay, nonneg=args.nonneg)
     else:
         lr = args.lr if args.lr is not None else 1.0
