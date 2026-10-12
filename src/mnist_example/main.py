@@ -7,6 +7,61 @@ from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
 
 
+class CustomOptimizer(optim.Optimizer):
+    """SGD with momentum and decoupled weight decay.
+
+    If nonneg=True, weight matrices/kernels (dim > 1) are projected onto
+    the non-negative orthant (clamped to >= 0) after every step. Biases are
+    left unconstrained.
+    """
+    def __init__(self, params, lr=0.01, momentum=0.9, weight_decay=0.0, nonneg=False):
+        defaults = dict(lr=lr, momentum=momentum, weight_decay=weight_decay, nonneg=nonneg)
+        super(CustomOptimizer, self).__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            lr, momentum, wd = group['lr'], group['momentum'], group['weight_decay']
+            for p in group['params']:
+                if p.grad is None:
+                    continue
+                if wd != 0:
+                    p.mul_(1 - lr * wd)
+                state = self.state[p]
+                if 'momentum_buffer' not in state:
+                    state['momentum_buffer'] = torch.clone(p.grad)
+                else:
+                    state['momentum_buffer'].mul_(momentum).add_(p.grad)
+                p.add_(state['momentum_buffer'], alpha=-lr)
+                if group['nonneg'] and p.dim() > 1:
+                    p.clamp_(min=0)
+
+        return loss
+
+
+def init_weights(model, nonneg=False):
+    """Kaiming-uniform weights, zero biases.
+
+    If nonneg=True, weights are drawn from U(0, 2/fan_in) so E[w] = 1/fan_in.
+    With all-positive weights the activation mean (not the variance) is what
+    compounds across layers, so this keeps it roughly constant with depth.
+    """
+    for m in model.modules():
+        if isinstance(m, (nn.Conv2d, nn.Linear)):
+            if nonneg:
+                fan_in, _ = nn.init._calculate_fan_in_and_fan_out(m.weight)
+                nn.init.uniform_(m.weight, 0.0, 2.0 / fan_in)
+            else:
+                nn.init.kaiming_uniform_(m.weight, nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+
+
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
@@ -78,8 +133,18 @@ def main():
                         help='input batch size for testing (default: 1000)')
     parser.add_argument('--epochs', type=int, default=14, metavar='N',
                         help='number of epochs to train (default: 14)')
-    parser.add_argument('--lr', type=float, default=1.0, metavar='LR',
-                        help='learning rate (default: 1.0)')
+    parser.add_argument('--lr', type=float, default=None, metavar='LR',
+                        help='learning rate (default: 0.01 for custom, 1.0 for adadelta)')
+    parser.add_argument('--optimizer', choices=['custom', 'adadelta'], default='custom',
+                        help='optimizer to use (default: custom)')
+    parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
+                        help='momentum for the custom optimizer (default: 0.9)')
+    parser.add_argument('--weight-decay', type=float, default=0.0, metavar='WD',
+                        help='weight decay for the custom optimizer (default: 0.0)')
+    parser.add_argument('--init', choices=['custom', 'default'], default='custom',
+                        help='weight initializer (default: custom)')
+    parser.add_argument('--nonneg', action='store_true',
+                        help='non-negative init and keep weights >= 0 during training')
     parser.add_argument('--gamma', type=float, default=0.7, metavar='M',
                         help='Learning rate step gamma (default: 0.7)')
     parser.add_argument('--no-accel', action='store_true',
@@ -124,8 +189,18 @@ def main():
     train_loader = torch.utils.data.DataLoader(dataset1,**train_kwargs)
     test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
 
-    model = Net().to(device)
-    optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
+    model = Net()
+    if args.init == 'custom':
+        init_weights(model, nonneg=args.nonneg)
+    model = model.to(device)
+
+    if args.optimizer == 'custom':
+        lr = args.lr if args.lr is not None else 0.01
+        optimizer = CustomOptimizer(model.parameters(), lr=lr, momentum=args.momentum,
+                                    weight_decay=args.weight_decay, nonneg=args.nonneg)
+    else:
+        lr = args.lr if args.lr is not None else 1.0
+        optimizer = optim.Adadelta(model.parameters(), lr=lr)
 
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
     for epoch in range(1, args.epochs + 1):
