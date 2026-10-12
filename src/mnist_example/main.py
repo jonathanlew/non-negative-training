@@ -37,9 +37,13 @@ class CustomOptimizer(optim.Optimizer):
                     state['momentum_buffer'] = torch.clone(p.grad)
                 else:
                     state['momentum_buffer'].mul_(momentum).add_(p.grad)
-                p.add_(state['momentum_buffer'], alpha=-lr)
-                if group['nonneg'] and p.dim() > 1:
-                    p.clamp_(min=0)
+
+                to_add = state['momentum_buffer'] * -lr
+                # exp(x) in (0, 1] for x <= 0, mirrored to 2 - exp(-x) in (1, 2) for x > 0
+                e = torch.exp(-to_add.abs())
+                to_mult = torch.where(to_add <= 0, e, 2 - e)
+
+                p.mul_(to_mult)
 
         return loss
 
