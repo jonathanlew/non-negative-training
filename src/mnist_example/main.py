@@ -10,9 +10,9 @@ from torch.optim.lr_scheduler import StepLR
 class CustomOptimizer(optim.Optimizer):
     """SGD with momentum and decoupled weight decay.
 
-    If nonneg=True, weight matrices/kernels (dim > 1) are projected onto
-    the non-negative orthant (clamped to >= 0) after every step. Biases are
-    left unconstrained.
+    If nonneg=True, every parameter gets a multiplicative update instead
+    (p *= to_mult, with to_mult in (0, 2)), which preserves sign, so
+    non-negative weights stay non-negative. Zero-initialized biases stay 0.
     """
     def __init__(self, params, lr=0.01, momentum=0.9, weight_decay=0.0, nonneg=False):
         defaults = dict(lr=lr, momentum=momentum, weight_decay=weight_decay, nonneg=nonneg)
@@ -39,11 +39,13 @@ class CustomOptimizer(optim.Optimizer):
                     state['momentum_buffer'].mul_(momentum).add_(p.grad)
 
                 to_add = state['momentum_buffer'] * -lr
-                # exp(x) in (0, 1] for x <= 0, mirrored to 2 - exp(-x) in (1, 2) for x > 0
-                e = torch.exp(-to_add.abs())
-                to_mult = torch.where(to_add <= 0, e, 2 - e)
-
-                p.mul_(to_mult)
+                if group['nonneg']:
+                    # exp(x) in (0, 1] for x <= 0, mirrored to 2 - exp(-x) in (1, 2) for x > 0
+                    e = torch.exp(-to_add.abs())
+                    to_mult = torch.where(to_add <= 0, e, 2 - e)
+                    p.mul_(to_mult)
+                else:
+                    p.add_(to_add)
 
         return loss
 
@@ -72,8 +74,9 @@ def shifted_abs(x, shift):
 
 
 class Net(nn.Module):
-    def __init__(self, shift=1.0):
+    def __init__(self, nonneg=False, shift=1.0):
         super(Net, self).__init__()
+        self.nonneg = nonneg
         self.shift = shift
         self.conv1 = nn.Conv2d(1, 32, 3, 1)
         self.conv2 = nn.Conv2d(32, 64, 3, 1)
@@ -82,16 +85,20 @@ class Net(nn.Module):
         self.fc1 = nn.Linear(9216, 128)
         self.fc2 = nn.Linear(128, 10)
 
+    def act(self, x):
+        # |x - shift| when weights are non-negative, otherwise ReLU
+        return shifted_abs(x, self.shift) if self.nonneg else F.relu(x)
+
     def forward(self, x):
         x = self.conv1(x)
-        x = shifted_abs(x, self.shift)
+        x = self.act(x)
         x = self.conv2(x)
-        x = shifted_abs(x, self.shift)
+        x = self.act(x)
         x = F.max_pool2d(x, 2)
         x = self.dropout1(x)
         x = torch.flatten(x, 1)
         x = self.fc1(x)
-        x = shifted_abs(x, self.shift)
+        x = self.act(x)
         x = self.dropout2(x)
         x = self.fc2(x)
         output = F.log_softmax(x, dim=1)
@@ -154,7 +161,7 @@ def main():
     parser.add_argument('--init', choices=['custom', 'default'], default='custom',
                         help='weight initializer (default: custom)')
     parser.add_argument('--shift', type=float, default=1.0, metavar='C',
-                        help='shift c in the |x - c| activation (default: 1.0)')
+                        help='shift c in the |x - c| activation used with --nonneg (default: 1.0)')
     parser.add_argument('--nonneg', action='store_true',
                         help='non-negative init and keep weights >= 0 during training')
     parser.add_argument('--gamma', type=float, default=0.7, metavar='M',
@@ -201,7 +208,7 @@ def main():
     train_loader = torch.utils.data.DataLoader(dataset1,**train_kwargs)
     test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
 
-    model = Net(shift=args.shift)
+    model = Net(nonneg=args.nonneg, shift=args.shift)
     if args.init == 'custom':
         init_weights(model, nonneg=args.nonneg)
     model = model.to(device)
