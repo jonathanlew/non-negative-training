@@ -66,9 +66,15 @@ def init_weights(model, nonneg=False):
                 nn.init.zeros_(m.bias)
 
 
+def shifted_abs(x, shift):
+    """Shifted absolute value activation: |x - shift|."""
+    return (x - shift).abs()
+
+
 class Net(nn.Module):
-    def __init__(self):
+    def __init__(self, shift=1.0):
         super(Net, self).__init__()
+        self.shift = shift
         self.conv1 = nn.Conv2d(1, 32, 3, 1)
         self.conv2 = nn.Conv2d(32, 64, 3, 1)
         self.dropout1 = nn.Dropout(0.25)
@@ -78,14 +84,14 @@ class Net(nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
-        x = F.relu(x)
+        x = shifted_abs(x, self.shift)
         x = self.conv2(x)
-        x = F.relu(x)
+        x = shifted_abs(x, self.shift)
         x = F.max_pool2d(x, 2)
         x = self.dropout1(x)
         x = torch.flatten(x, 1)
         x = self.fc1(x)
-        x = F.relu(x)
+        x = shifted_abs(x, self.shift)
         x = self.dropout2(x)
         x = self.fc2(x)
         output = F.log_softmax(x, dim=1)
@@ -147,6 +153,8 @@ def main():
                         help='weight decay for the custom optimizer (default: 0.0)')
     parser.add_argument('--init', choices=['custom', 'default'], default='custom',
                         help='weight initializer (default: custom)')
+    parser.add_argument('--shift', type=float, default=1.0, metavar='C',
+                        help='shift c in the |x - c| activation (default: 1.0)')
     parser.add_argument('--nonneg', action='store_true',
                         help='non-negative init and keep weights >= 0 during training')
     parser.add_argument('--gamma', type=float, default=0.7, metavar='M',
@@ -193,7 +201,7 @@ def main():
     train_loader = torch.utils.data.DataLoader(dataset1,**train_kwargs)
     test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
 
-    model = Net()
+    model = Net(shift=args.shift)
     if args.init == 'custom':
         init_weights(model, nonneg=args.nonneg)
     model = model.to(device)
