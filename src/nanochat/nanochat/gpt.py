@@ -37,6 +37,8 @@ class GPTConfig:
     # Characters: L=long (full context), S=short (quarter context)
     # Examples: "L"=all full context, "SL"=alternating, "SSL"=two short then one long
     window_pattern: str = "SSSL"
+    # Non-negative transformer matrices: non-negative init here, multiplicative Muon update in optim.py
+    nonneg: bool = False
 
 
 def norm(x):
@@ -214,6 +216,8 @@ class GPT(nn.Module):
             attn.c_proj:     zeros
             mlp.c_fc:        uniform, std=1/sqrt(n_embd)
             mlp.c_proj:      zeros
+        with config.nonneg, every block matrix above is instead U(0, 2/fan_in) so E[w] = 1/fan_in
+        (no zeros: the multiplicative update can never move a zero weight)
         """
 
         # Embedding and unembedding
@@ -230,6 +234,10 @@ class GPT(nn.Module):
             torch.nn.init.zeros_(block.attn.c_proj.weight) # projections are zero
             torch.nn.init.uniform_(block.mlp.c_fc.weight, -s * 0.4, s * 0.4)  # 0.4x init scale for c_fc
             torch.nn.init.zeros_(block.mlp.c_proj.weight)
+            if self.config.nonneg:
+                for w in (block.attn.c_q.weight, block.attn.c_k.weight, block.attn.c_v.weight,
+                          block.attn.c_proj.weight, block.mlp.c_fc.weight, block.mlp.c_proj.weight):
+                    torch.nn.init.uniform_(w, 0.0, 2.0 / w.size(1))
 
         # Per-layer scalars
         # Per-layer resid init: stronger residual at early layers, weaker at deep layers
@@ -449,6 +457,7 @@ class GPT(nn.Module):
             param_groups.append(dict(
                 kind='muon', params=group_params, lr=matrix_lr,
                 momentum=0.95, ns_steps=5, beta2=0.9, weight_decay=weight_decay,
+                nonneg=self.config.nonneg,
             ))
 
         optimizer = MuonAdamW(param_groups)

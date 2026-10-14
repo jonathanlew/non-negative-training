@@ -120,6 +120,7 @@ def muon_step_fused(
     beta2_t: Tensor,                # () - 0-D CPU tensor, beta2 for second moment
     ns_steps: int,                  # 5 - number of Newton-Schulz/Polar Express iterations
     red_dim: int,                   # -1 or -2 - reduction dimension for variance
+    nonneg: bool = False,           # multiplicative (sign-preserving) update instead of additive
 ) -> None:
     """
     Fused Muon step: momentum -> polar_express -> variance_reduction -> cautious_update
@@ -177,7 +178,14 @@ def muon_step_fused(
     lr = lr_t.to(g.dtype)
     wd = wd_t.to(g.dtype)
     mask = (g * stacked_params) >= 0
-    stacked_params.sub_(lr * g + lr * wd * stacked_params * mask)
+    if nonneg:
+        # p *= f(-lr * g) with f(x) = exp(x) in (0, 1] for x <= 0, mirrored to 2 - exp(-x) in (1, 2) for x > 0,
+        # and weight decay as the factor (1 - lr * wd); both factors are positive, so p keeps its sign
+        x = -lr * g
+        e = torch.exp(-x.abs())
+        stacked_params.mul_(torch.where(x <= 0, e, 2 - e) * (1 - lr * wd * mask))
+    else:
+        stacked_params.sub_(lr * g + lr * wd * stacked_params * mask)
 
 # -----------------------------------------------------------------------------
 
@@ -255,7 +263,8 @@ class MuonAdamW(torch.optim.Optimizer):
             - 'params': List of parameters
             - 'kind': 'adamw' or 'muon'
             - For AdamW groups: 'lr', 'betas', 'eps', 'weight_decay'
-            - For Muon groups: 'lr', 'momentum', 'ns_steps', 'beta2', 'weight_decay'
+            - For Muon groups: 'lr', 'momentum', 'ns_steps', 'beta2', 'weight_decay',
+              optional 'nonneg' (multiplicative update that keeps non-negative params non-negative)
     """
     def __init__(self, param_groups: list[dict]):
         super().__init__(param_groups, defaults={})
@@ -396,7 +405,7 @@ class MuonAdamW(torch.optim.Optimizer):
                 grad_chunk[:num_owned], stacked_owned,
                 state["momentum_buffer"][:num_owned], state["second_momentum_buffer"][:num_owned],
                 self._muon_momentum_t, self._muon_lr_t, self._muon_wd_t, self._muon_beta2_t,
-                group["ns_steps"], red_dim,
+                group["ns_steps"], red_dim, group.get("nonneg", False),
             )
 
         if info['stacked_grads'] is None:
