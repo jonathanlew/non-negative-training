@@ -50,7 +50,7 @@ parser.add_argument("--top-k", type=int, default=50, help="top-k sampling (0 = d
 # Optimization
 parser.add_argument("--embedding-lr", type=float, default=0.2, help="learning rate for embedding parameters (Adam)")
 parser.add_argument("--unembedding-lr", type=float, default=0.004, help="learning rate for unembedding parameters (Adam)")
-parser.add_argument("--matrix-lr", type=float, default=None, help="learning rate for matrix parameters (Muon) (default: 0.2 for nonneg models, else 0.02)")
+parser.add_argument("--matrix-lr", type=float, default=None, help="learning rate for matrix parameters (Muon) (default: 0.1 for nonneg models, else 0.02)")
 parser.add_argument("--weight-decay", type=float, default=0.0, help="weight decay for embedding/unembedding parameters (Adam)")
 parser.add_argument("--init-lr-frac", type=float, default=0.05, help="initial LR as fraction of base LR")
 # Evaluation / checkpointing
@@ -73,7 +73,7 @@ wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-rl
 # Init model and tokenizer
 model, tokenizer, meta = load_model("sft", device, phase="eval", model_tag=args.model_tag, step=args.model_step)
 if args.matrix_lr is None:
-    args.matrix_lr = 0.2 if model.config.nonneg else 0.02
+    args.matrix_lr = 0.1 if model.config.nonneg else 0.02
 engine = Engine(model, tokenizer) # for sampling rollouts
 
 # -----------------------------------------------------------------------------
