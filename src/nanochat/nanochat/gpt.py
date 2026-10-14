@@ -424,8 +424,10 @@ class GPT(nn.Module):
             'total': total,
         }
 
-    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=0.02, weight_decay=0.0, scalar_lr=0.5):
+    def setup_optimizer(self, unembedding_lr=0.004, embedding_lr=0.2, matrix_lr=None, weight_decay=0.0, scalar_lr=0.5):
         model_dim = self.config.n_embd
+        if matrix_lr is None:
+            matrix_lr = 0.2 if self.config.nonneg else 0.02 # multiplicative updates need a much larger lr
 
         # Separate out all parameters into groups
         matrix_params = list(self.transformer.h.parameters())

@@ -101,7 +101,7 @@ for name, fallback, source in [
     ("total_batch_size",  524288, meta),
     ("embedding_lr",      0.3,   pretrain_user_config),
     ("unembedding_lr",    0.004, pretrain_user_config),
-    ("matrix_lr",         0.02,  pretrain_user_config),
+    ("matrix_lr",         0.2 if model.config.nonneg else 0.02, pretrain_user_config),
 ]:
     arg_val = getattr(args, name)
     pretrain_val = source.get(name)

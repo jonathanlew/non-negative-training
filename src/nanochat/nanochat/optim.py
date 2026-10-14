@@ -181,9 +181,9 @@ def muon_step_fused(
     if nonneg:
         # p *= f(-lr * g) with f(x) = exp(x) in (0, 1] for x <= 0, mirrored to 2 - exp(-x) in (1, 2) for x > 0,
         # and weight decay as the factor (1 - lr * wd); both factors are positive, so p keeps its sign
-        x = -lr * g
+        x = -(lr * g + lr * wd * stacked_params * mask)
         e = torch.exp(-x.abs())
-        stacked_params.mul_(torch.where(x <= 0, e, 2 - e) * (1 - lr * wd * mask))
+        stacked_params.mul_(torch.where(x <= 0, e, 2 - e))
     else:
         stacked_params.sub_(lr * g + lr * wd * stacked_params * mask)
 
