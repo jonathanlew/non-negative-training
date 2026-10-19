@@ -6,8 +6,8 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64000M
-#SBATCH --time=2:30:00
-#SBATCH --gpus-per-node=h100:8
+#SBATCH --time=1:30:00
+#SBATCH --gpus-per-node=h100:1
 #SBATCH --output=nanochat_train_output.txt
 #SBATCH --error=nanochat_train_error.txt
 #SBATCH --mail-user=jlew256@gmail.com
@@ -50,7 +50,7 @@ mv nanochat_train_error.txt nanochat_train_error_profile_int4_$SLURM_JOB_ID.txt
 
 cd $SLURM_SUBMIT_DIR
 
-OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=1 -m scripts.base_train -- \
     --depth=12 \
     --run="d12" \
     --model-tag="d12" \
