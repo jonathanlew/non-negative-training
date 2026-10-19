@@ -19,6 +19,28 @@ module load gcc/12.3 arrow/24.0.0 python/3.11 scipy-stack/2026a cuda/13.2 opencv
 module list
 export PIP_CACHE_DIR=$SLURM_TMPDIR/pip_cache
 
+# Default intermediate artifacts directory is in ~/.cache/nanochat
+export OMP_NUM_THREADS=1
+export NANOCHAT_BASE_DIR="/home/jonth112/projects/def-aamodt/jonathan/.cache/nanochat"
+mkdir -p $NANOCHAT_BASE_DIR
+
+# -----------------------------------------------------------------------------
+# Python venv setup with uv
+
+# install uv (if not already installed)
+command -v uv &> /dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+# create a .venv local virtual environment (if it doesn't exist)
+[ -d ".venv" ] || uv venv
+# install the repo dependencies
+uv sync --extra gpu --group dev
+# activate venv so that `python` uses the project's venv instead of system python
+source .venv/bin/activate
+
+pip install --no-index wandb
+
+### Save your wandb API key in your .bash_profile or replace $API_KEY with your actual API key. Uncomment the line below and comment out "wandb offline" if running in online mode ###
+wandb login $API_KEY 
+
 export HF_HOME="/home/jonth112/scratch/"
 
 cd $SLURM_SUBMIT_DIR
@@ -26,12 +48,12 @@ cd $SLURM_SUBMIT_DIR
 mv nanochat_train_output.txt nanochat_train_output_profile_int4_$SLURM_JOB_ID.txt
 mv nanochat_train_error.txt nanochat_train_error_profile_int4_$SLURM_JOB_ID.txt
 
-
-nvidia-smi --query-gpu=uuid --format=csv,noheader > my_current_GPU_UUID.txt
-nvidia-smi > nvidia_smi.txt
-
-python -c "import torch; print(torch.cuda.is_available()); print(torch.__version__);"
-
 cd $SLURM_SUBMIT_DIR
 
-bash /home/jonth112/gradient-reuse/src/nanochat/runs/speedrun.sh
+OMP_NUM_THREADS=1 torchrun --standalone --nproc_per_node=8 -m scripts.base_train -- \
+    --depth=12 \
+    --run="d12" \
+    --model-tag="d12" \
+    --core-metric-every=999999 \
+    --sample-every=-1 \
+    --save-every=-1
