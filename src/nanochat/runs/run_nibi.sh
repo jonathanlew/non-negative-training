@@ -4,10 +4,10 @@
 #SBATCH --account=rrg-aamodt
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=6
 #SBATCH --mem=64000M
 #SBATCH --time=1:30:00
-#SBATCH --gpus-per-node=h100:1
+#SBATCH --gpus=h100_3g.40gb:1
 #SBATCH --output=nanochat_train_output.txt
 #SBATCH --error=nanochat_train_error.txt
 #SBATCH --mail-user=jlew256@gmail.com
